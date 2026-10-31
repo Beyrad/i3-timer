@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import fcntl
 import json
 import os
 import time
@@ -17,9 +18,11 @@ except (ValueError, ImportError):
 
 APP_ID = "i3-timer"
 ICON_NAME = "timer"
+DATA_HOME = os.environ.get("XDG_DATA_HOME") or os.path.join(
+    os.path.expanduser("~"), ".local", "share"
+)
 ICON_DIR = os.environ.get(
-    "I3_TIMER_ICON_DIR",
-    os.path.join(os.path.expanduser("~"), ".local", "share", "i3-timer", "icons"),
+    "I3_TIMER_ICON_DIR", os.path.join(DATA_HOME, "i3-timer", "icons")
 )
 
 
@@ -36,10 +39,11 @@ def runtime_dir():
 RUNTIME = runtime_dir()
 STATE_FILE = os.path.join(RUNTIME, "i3-timer.json")
 OUT_FILE = os.path.join(RUNTIME, "i3-timer.time")
+PID_FILE = os.path.join(RUNTIME, "i3-timer.pid")
 
 
 def fmt(seconds):
-    total = int(seconds)
+    total = max(0, int(seconds))
     hours, rem = divmod(total, 3600)
     minutes, secs = divmod(rem, 60)
     return "%02d:%02d:%02d" % (hours, minutes, secs)
@@ -51,16 +55,14 @@ class TimerApp:
         self.start = None
         self.accum = 0.0
         self.load()
+        self.write_output()
 
         self.menu = Gtk.Menu()
         self.toggle_item = Gtk.MenuItem(label="Start")
-        self.stop_item = Gtk.MenuItem(label="Stop")
         self.reset_item = Gtk.MenuItem(label="Reset")
         self.toggle_item.connect("activate", self.on_toggle)
-        self.stop_item.connect("activate", self.on_stop)
         self.reset_item.connect("activate", self.on_reset)
         self.menu.append(self.toggle_item)
-        self.menu.append(self.stop_item)
         self.menu.append(self.reset_item)
         self.menu.show_all()
 
@@ -77,28 +79,33 @@ class TimerApp:
         self.indicator.set_menu(self.menu)
 
         self.refresh_ui()
-        self.write_output()
         GLib.timeout_add(1000, self.tick)
 
     def elapsed(self):
         if self.running and self.start is not None:
-            return self.accum + (time.time() - self.start)
-        return self.accum
+            return max(0.0, self.accum + (time.monotonic() - self.start))
+        return max(0.0, self.accum)
 
     def load(self):
         try:
             with open(STATE_FILE) as handle:
                 data = json.load(handle)
+            if not isinstance(data, dict):
+                return
             self.running = bool(data.get("running"))
-            self.start = data.get("start")
-            self.accum = float(data.get("accum", 0.0))
-            if self.running and self.start is None:
-                self.start = time.time()
-        except (OSError, ValueError):
-            pass
+            self.accum = max(0.0, float(data.get("accum", 0.0)))
+            if self.running:
+                legacy_start = data.get("start")
+                if isinstance(legacy_start, (int, float)):
+                    self.accum += max(0.0, time.time() - legacy_start)
+                self.start = time.monotonic()
+        except (OSError, ValueError, TypeError):
+            self.running = False
+            self.start = None
+            self.accum = 0.0
 
     def save(self):
-        data = {"running": self.running, "start": self.start, "accum": self.accum}
+        data = {"running": self.running, "accum": self.elapsed()}
         tmp = STATE_FILE + ".tmp"
         try:
             with open(tmp, "w") as handle:
@@ -121,9 +128,10 @@ class TimerApp:
 
     def start_timer(self):
         if not self.running:
-            self.start = time.time()
+            self.start = time.monotonic()
             self.running = True
             self.save()
+            self.write_output()
             self.refresh_ui()
 
     def pause_timer(self):
@@ -132,6 +140,7 @@ class TimerApp:
             self.running = False
             self.start = None
             self.save()
+            self.write_output()
             self.refresh_ui()
 
     def on_toggle(self, _item):
@@ -140,31 +149,47 @@ class TimerApp:
         else:
             self.start_timer()
 
-    def on_stop(self, _item):
-        if self.running:
-            self.accum = self.elapsed()
-            self.running = False
-            self.start = None
-        self.save()
-        self.refresh_ui()
-
     def on_reset(self, _item):
         self.running = False
         self.start = None
         self.accum = 0.0
         self.save()
-        self.refresh_ui()
         self.write_output()
+        self.refresh_ui()
 
     def tick(self):
+        if self.running:
+            self.save()
         self.write_output()
         return True
 
 
+def acquire_lock():
+    try:
+        handle = open(PID_FILE, "a+")
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return None
+    handle.seek(0)
+    handle.truncate()
+    handle.write(str(os.getpid()))
+    handle.flush()
+    return handle
+
+
 def main():
     os.makedirs(RUNTIME, exist_ok=True)
-    TimerApp()
-    Gtk.main()
+    lock = acquire_lock()
+    if lock is None:
+        return
+    try:
+        TimerApp()
+        Gtk.main()
+    finally:
+        try:
+            os.unlink(PID_FILE)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":

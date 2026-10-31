@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+import json
+import os
+import time
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, GLib
+
+try:
+    gi.require_version("AyatanaAppIndicator3", "0.1")
+    from gi.repository import AyatanaAppIndicator3 as AppIndicator
+except (ValueError, ImportError):
+    gi.require_version("AppIndicator3", "0.1")
+    from gi.repository import AppIndicator3 as AppIndicator
+
+APP_ID = "i3-timer"
+ICON_NAME = "timer"
+ICON_DIR = os.environ.get(
+    "I3_TIMER_ICON_DIR",
+    os.path.join(os.path.expanduser("~"), ".local", "share", "i3-timer", "icons"),
+)
+
+
+def runtime_dir():
+    env = os.environ.get("XDG_RUNTIME_DIR")
+    if env:
+        return env
+    fallback = "/run/user/%d" % os.getuid()
+    if os.path.isdir(fallback):
+        return fallback
+    return "/tmp/i3-timer-%d" % os.getuid()
+
+
+RUNTIME = runtime_dir()
+STATE_FILE = os.path.join(RUNTIME, "i3-timer.json")
+OUT_FILE = os.path.join(RUNTIME, "i3-timer.time")
+
+
+def fmt(seconds):
+    total = int(seconds)
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    return "%02d:%02d:%02d" % (hours, minutes, secs)
+
+
+class TimerApp:
+    def __init__(self):
+        self.running = False
+        self.start = None
+        self.accum = 0.0
+        self.load()
+
+        self.menu = Gtk.Menu()
+        self.toggle_item = Gtk.MenuItem(label="Start")
+        self.stop_item = Gtk.MenuItem(label="Stop")
+        self.reset_item = Gtk.MenuItem(label="Reset")
+        self.toggle_item.connect("activate", self.on_toggle)
+        self.stop_item.connect("activate", self.on_stop)
+        self.reset_item.connect("activate", self.on_reset)
+        self.menu.append(self.toggle_item)
+        self.menu.append(self.stop_item)
+        self.menu.append(self.reset_item)
+        self.menu.show_all()
+
+        self.indicator = AppIndicator.Indicator.new(
+            APP_ID, ICON_NAME, AppIndicator.IndicatorCategory.APPLICATION_STATUS
+        )
+        if os.path.isfile(os.path.join(ICON_DIR, ICON_NAME + ".png")):
+            self.indicator.set_icon_theme_path(ICON_DIR)
+            self.indicator.set_icon_full(ICON_NAME, "Timer")
+        else:
+            self.indicator.set_icon_full("alarm", "Timer")
+        self.indicator.set_title("Timer")
+        self.indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
+        self.indicator.set_menu(self.menu)
+
+        self.refresh_ui()
+        self.write_output()
+        GLib.timeout_add(1000, self.tick)
+
+    def elapsed(self):
+        if self.running and self.start is not None:
+            return self.accum + (time.time() - self.start)
+        return self.accum
+
+    def load(self):
+        try:
+            with open(STATE_FILE) as handle:
+                data = json.load(handle)
+            self.running = bool(data.get("running"))
+            self.start = data.get("start")
+            self.accum = float(data.get("accum", 0.0))
+            if self.running and self.start is None:
+                self.start = time.time()
+        except (OSError, ValueError):
+            pass
+
+    def save(self):
+        data = {"running": self.running, "start": self.start, "accum": self.accum}
+        tmp = STATE_FILE + ".tmp"
+        try:
+            with open(tmp, "w") as handle:
+                json.dump(data, handle)
+            os.replace(tmp, STATE_FILE)
+        except OSError:
+            pass
+
+    def write_output(self):
+        tmp = OUT_FILE + ".tmp"
+        try:
+            with open(tmp, "w") as handle:
+                handle.write(fmt(self.elapsed()))
+            os.replace(tmp, OUT_FILE)
+        except OSError:
+            pass
+
+    def refresh_ui(self):
+        self.toggle_item.set_label("Pause" if self.running else "Start")
+
+    def start_timer(self):
+        if not self.running:
+            self.start = time.time()
+            self.running = True
+            self.save()
+            self.refresh_ui()
+
+    def pause_timer(self):
+        if self.running:
+            self.accum = self.elapsed()
+            self.running = False
+            self.start = None
+            self.save()
+            self.refresh_ui()
+
+    def on_toggle(self, _item):
+        if self.running:
+            self.pause_timer()
+        else:
+            self.start_timer()
+
+    def on_stop(self, _item):
+        if self.running:
+            self.accum = self.elapsed()
+            self.running = False
+            self.start = None
+        self.save()
+        self.refresh_ui()
+
+    def on_reset(self, _item):
+        self.running = False
+        self.start = None
+        self.accum = 0.0
+        self.save()
+        self.refresh_ui()
+        self.write_output()
+
+    def tick(self):
+        self.write_output()
+        return True
+
+
+def main():
+    os.makedirs(RUNTIME, exist_ok=True)
+    TimerApp()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

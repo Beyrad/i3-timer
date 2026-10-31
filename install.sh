@@ -26,6 +26,23 @@ say() { printf '%s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
+stop_applet() {
+    local pidfile="$RUNTIME_DIR/i3-timer.pid"
+    [ -f "$pidfile" ] || return 0
+    local pid
+    pid="$(cat "$pidfile" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null \
+        && tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q "i3-timer"; then
+        kill "$pid" 2>/dev/null || true
+        local i
+        for i in 1 2 3 4 5; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.1
+        done
+    fi
+    rm -f "$pidfile"
+}
+
 [ -f "$REPO_DIR/$APP_NAME" ] || die "run install.sh from the repository directory"
 command -v python3 >/dev/null 2>&1 || die "python3 is required"
 python3 - <<'PY' >/dev/null 2>&1 || die "GTK/AppIndicator bindings missing. Install python3-gi and gir1.2-ayatanaappindicator3-0.1 (or gir1.2-appindicator3-0.1)."
@@ -58,6 +75,7 @@ if [ -z "$I3STATUS_CONF" ]; then
         cp /etc/i3status.conf "$I3STATUS_CONF"
     else
         printf 'general {\n        colors = true\n}\n' > "$I3STATUS_CONF"
+        warn "Created a minimal $I3STATUS_CONF; add your usual modules back."
     fi
     say "Created $I3STATUS_CONF"
 fi
@@ -76,12 +94,21 @@ text = re.sub(r"\n?" + re.escape(begin) + r".*?" + re.escape(end) + r"\n?", "\n"
 
 if re.search(r"^\s*interval\s*=\s*\d+", text, re.M):
     text = re.sub(r"^(\s*interval\s*=\s*)\d+", r"\g<1>1", text, count=1, flags=re.M)
-elif re.search(r"general\s*\{", text):
-    match = re.search(r"general\s*\{", text)
-    index = text.index("{", match.start()) + 1
-    text = text[:index] + "\n        interval = 1" + text[index:]
 else:
-    text = "general {\n        interval = 1\n}\n\n" + text
+    match = re.search(r"(general\s*\{)([^\n]*)", text)
+    if match:
+        rest = match.group(2)
+        if rest.strip():
+            rest = "\n" + rest.lstrip()
+        text = (
+            text[: match.start()]
+            + match.group(1)
+            + "\n        interval = 1"
+            + rest
+            + text[match.end() :]
+        )
+    else:
+        text = "general {\n        interval = 1\n}\n\n" + text
 
 block = (
     "\n" + begin + "\n"
@@ -107,39 +134,49 @@ for candidate in "$CFG_HOME/i3/config" "$HOME/.i3/config"; do
 done
 
 if [ -n "$I3_CONF" ]; then
-    python3 - "$I3_CONF" "$APP_PATH" "$TIME_FILE" "$STAMP" "$BEGIN_MARK" "$END_MARK" <<'PY'
+    python3 - "$I3_CONF" "$APP_PATH" "$STAMP" "$BEGIN_MARK" "$END_MARK" <<'PY'
 import re
+import shlex
 import shutil
 import sys
 
-conf, app_path, time_file, stamp, begin, end = sys.argv[1:7]
+conf, app_path, stamp, begin, end = sys.argv[1:6]
 with open(conf, encoding="utf-8") as handle:
     text = handle.read()
 
 shutil.copy2(conf, conf + ".bak-" + stamp)
 text = re.sub(r"\n?" + re.escape(begin) + r".*?" + re.escape(end) + r"\n?", "\n", text, flags=re.S)
 
-command = "test -f %s || echo 00:00:00 > %s; exec %s" % (time_file, time_file, app_path)
-block = "\n" + begin + "\n" + "exec --no-startup-id sh -c '%s'\n" % command + end + "\n"
+line = "exec_always --no-startup-id %s" % shlex.quote(app_path)
+block = "\n" + begin + "\n" + line + "\n" + end + "\n"
 
 with open(conf, "w", encoding="utf-8") as handle:
     handle.write(text.rstrip() + "\n" + block)
 print("Updated " + conf)
 PY
+
+    if grep -qE '^[[:space:]]*status_command[[:space:]]' "$I3_CONF" \
+        && ! grep -qE '^[[:space:]]*status_command.*i3status' "$I3_CONF"; then
+        warn "i3bar's status_command is not i3status; the timer block will not be shown."
+    fi
 else
     warn "No i3 config found. Add this line manually:"
-    say "exec --no-startup-id sh -c 'test -f \"$TIME_FILE\" || echo 00:00:00 > \"$TIME_FILE\"; exec \"$APP_PATH\"'"
+    say "exec_always --no-startup-id \"$APP_PATH\""
 fi
 
-pkill -f "$APP_PATH" 2>/dev/null || true
-setsid "$APP_PATH" >/dev/null 2>&1 &
-if [ -n "${DISPLAY:-}" ] && command -v i3-msg >/dev/null 2>&1; then
-    i3-msg reload >/dev/null 2>&1 || true
-    say "Started i3-timer and reloaded i3."
+if [ -n "${DISPLAY:-}" ]; then
+    stop_applet
+    setsid "$APP_PATH" >/dev/null 2>&1 &
+    if command -v i3-msg >/dev/null 2>&1; then
+        i3-msg reload >/dev/null 2>&1 || true
+        say "Started i3-timer and reloaded i3."
+    else
+        say "Started i3-timer. Reload i3 to update the bar."
+    fi
 else
-    say "Started i3-timer. Reload i3 to update the bar."
+    say "Installed. i3-timer will start at your next i3 session."
 fi
 
 say ""
-say "Done. Click the clock icon in the tray: Start/Pause, Stop, Reset."
+say "Done. Click the clock icon in the tray: Start/Pause and Reset."
 say "Elapsed time appears at the end of the i3bar."

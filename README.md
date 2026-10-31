@@ -10,7 +10,9 @@ elapsed time is shown as a separate block at the end of the i3bar.
 [ ... i3status modules ... ] [ ⏱ 00:12:34 ] [ tray: ⏰ ]
 ```
 
-![Sample](pics/sample.png)
+<p align="center">
+  <img src="pics/sample.png" width="300" alt="Sample">
+</p>
 
 ## Features
 

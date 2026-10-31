@@ -43,6 +43,18 @@ stop_applet() {
     rm -f "$pidfile"
 }
 
+restart_i3() {
+    if [ -n "${DISPLAY:-}" ] && command -v i3-msg >/dev/null 2>&1; then
+        if i3-msg restart >/dev/null 2>&1; then
+            say "Restarted i3 so i3status picks up the timer block."
+            return 0
+        fi
+        warn "i3-msg restart failed."
+    fi
+    warn "Restart i3 (Mod+Shift+r) so i3status picks up the timer block."
+    return 1
+}
+
 [ -f "$REPO_DIR/$APP_NAME" ] || die "run install.sh from the repository directory"
 command -v python3 >/dev/null 2>&1 || die "python3 is required"
 python3 - <<'PY' >/dev/null 2>&1 || die "GTK/AppIndicator bindings missing. Install python3-gi and gir1.2-ayatanaappindicator3-0.1 (or gir1.2-appindicator3-0.1)."
@@ -167,14 +179,9 @@ fi
 if [ -n "${DISPLAY:-}" ]; then
     stop_applet
     setsid "$APP_PATH" >/dev/null 2>&1 &
-    if command -v i3-msg >/dev/null 2>&1; then
-        i3-msg reload >/dev/null 2>&1 || true
-        say "Started i3-timer and reloaded i3."
-    else
-        say "Started i3-timer. Reload i3 to update the bar."
-    fi
+    restart_i3 || true
 else
-    say "Installed. i3-timer will start at your next i3 session."
+    say "Installed. Restart i3 (Mod+Shift+r) to start the applet and show the bar block."
 fi
 
 say ""

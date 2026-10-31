@@ -59,7 +59,11 @@ The installer:
 2. adds a marked `read_file` block to your `i3status` config and sets
    `interval = 1`,
 3. adds a marked `exec_always` line to your i3 config,
-4. starts the applet and reloads i3.
+4. starts the applet and restarts i3 so the bar block appears.
+
+A restart is required because `i3status` reads its configuration only when it
+starts; `i3-msg reload` does not restart the running status process. If no
+display is available, the installer asks you to restart i3 (`Mod+Shift+r`).
 
 Backups are written next to every config as `config.bak-<timestamp>`. Running
 the installer twice is safe.
@@ -92,9 +96,13 @@ The elapsed time appears at the end of the i3bar and updates every second.
 - **No tray icon**: make sure i3bar's tray is enabled (`tray_output primary`, or
   remove `tray_output none`) and that no other tray host is taking over.
 - **`read_file ... No such file or directory`**: the applet is not running.
-  Start it with `~/.local/bin/i3-timer &` or reload i3.
+  Start it with `~/.local/bin/i3-timer &`, then restart i3 (`Mod+Shift+r`).
+- **`i3timer - 2: No such file or directory` after uninstalling**: the running
+  `i3status` still has the old config in memory. Run `i3-msg restart` (or
+  `Mod+Shift+r`); the uninstaller does this automatically when a display is
+  available.
 - **Two icons**: only one instance is allowed; stop stray processes with
-  `pkill -f 'bin/i3-timer$'` and reload i3.
+  `pkill -f 'bin/i3-timer$'` and restart i3 (`Mod+Shift+r`).
 - **No time block**: the installer targets `i3status`; i3blocks/polybar setups
   are not supported out of the box.
 
@@ -105,8 +113,11 @@ The elapsed time appears at the end of the i3bar and updates every second.
 ```
 
 This stops the applet, removes the installed files, and strips the marked blocks
-from your configs (with backups). If you installed manually, remove the
-`i3-timer` lines from your configs yourself.
+from your configs (with backups), then restarts i3 so `i3status` drops the block.
+Without a display it leaves the runtime time file in place (cleared on logout)
+and asks you to restart, so the bar shows no `read_file` error in the meantime.
+If you installed manually, remove the `i3-timer` lines from your configs
+yourself.
 
 ## How it works
 

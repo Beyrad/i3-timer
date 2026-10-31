@@ -71,7 +71,7 @@ The elapsed time appears at the end of the i3bar and updates every second.
 ## Customize
 
 - **Color**: edit the `color_good` value in the generated `read_file i3timer`
-  block (`#000080` is navy blue).
+  block (defaults to cyan `#61e9f2`).
 - **Icon**: replace `~/.local/share/i3-timer/icons/timer.png` with your own PNG.
 
 ## Uninstall

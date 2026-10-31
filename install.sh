@@ -89,7 +89,7 @@ block = (
     "read_file i3timer {\n"
     '    path = "%s"\n'
     '    format = "\u23f1 %%content"\n'
-    '    color_good = "#000080"\n'
+    '    color_good = "#61e9f2"\n'
     "}\n" + end + "\n"
 ) % time_file
 

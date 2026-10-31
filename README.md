@@ -10,6 +10,8 @@ elapsed time is shown as a separate block at the end of the i3bar.
 [ ... i3status modules ... ] [ ⏱ 00:12:34 ] [ tray: ⏰ ]
 ```
 
+![Sample][pics/sample.png]
+
 ## Features
 
 - System-tray icon with a click menu (Start/Pause, Stop, Reset).
